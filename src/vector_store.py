@@ -278,3 +278,11 @@ class VectorStoreManager:
         except Exception as e:
             logger.error(f"Vector search failed in collection '{self.collection_name}': {e}", exc_info=True)
             raise
+
+    def search_with_scores(self, query: str, top_k: int = 5) -> List[Tuple[DocumentChunk, float]]:
+        """
+        Performs semantic vector search and returns pairs of (DocumentChunk, float_score).
+        """
+        chunks = self.search(query=query, top_k=top_k)
+        return [(c, float(c.metadata.get("score", 0.0))) for c in chunks]
+

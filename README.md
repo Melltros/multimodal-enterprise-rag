@@ -16,18 +16,23 @@ An enterprise-grade, production-ready Retrieval-Augmented Generation (RAG) platf
 flowchart TD
     A[Financial PDF Report] -->|PyMuPDF Parsing + Table Extraction| B[Document Chunks + Metadata]
     B -->|OpenAI Embeddings| C[(Qdrant Vector Store)]
+    B -->|Tokenization & Inverted Index| D[BM25 Lexical Index]
     
-    D[User Query] -->|Embedding| C
-    C -->|Top-k Cosine Similarity| E[Retrieved Context Chunks]
+    E[User Query] -->|Dense Vector Search| C
+    E -->|Sparse Keyword Search| D
     
-    E & D --> F[Synthesis Engine / GPT-4o]
-    F -->|Strict Citation Prompt| G[Draft Answer + Page Citations]
+    C & D -->|Reciprocal Rank Fusion RRF| F[Top-k Hybrid Ranked Chunks]
     
-    G & E & D --> H[Critic Layer / LLM-as-a-Judge]
-    H -->|Pydantic Structured Output| I{Faithfulness & Relevancy >= 4?}
+    F & E --> G[Synthesis Engine / GPT-4o]
+    G -->|Strict Grounding Prompt| H[Draft Answer + Page Citations]
     
-    I -->|Yes| J[✅ Verified Answer Delivered to User]
-    I -->|No| K[🚨 Flagged / Alert Quality Control]
+    H & F & E --> I[Critic Layer / LLM-as-a-Judge]
+    I -->|Pydantic Structured Output| J{Faithfulness & Relevancy >= 4?}
+    
+    J -->|Yes| K[✅ Verified Answer Delivered to User]
+    J -->|No| L[🚨 Flagged / Alert Quality Control]
+    
+    K & L --> M[(Enterprise Audit Trail JSONL & CSV)]
 ```
 
 ---
@@ -37,20 +42,26 @@ flowchart TD
 ```
 multimodal-enterprise-rag/
 ├── src/
-│   ├── __init__.py            # Module exports
+│   ├── __init__.py            # Package exports
 │   ├── parser.py              # PyMuPDF ingestion, table detection, and page metadata
 │   ├── vector_store.py        # Qdrant client & OpenAI embedding management
+│   ├── hybrid_search.py       # BM25 Okapi & Reciprocal Rank Fusion (RRF) retriever
+│   ├── audit_logger.py        # Enterprise compliance audit trail (JSONL & CSV)
 │   ├── generator.py           # Synthesis engine with strict grounding & page citations
 │   └── evaluator.py           # Critic layer (LLM-as-a-Judge with Pydantic structured output)
 ├── data/
 │   ├── create_sample_pdf.py   # Synthetic 4-page financial report generator
 │   └── sample_report.pdf      # Sample Q3 shareholder report with tables
 ├── tests/
-│   └── test_pipeline.py       # Comprehensive unit & integration test suite
+│   ├── test_pipeline.py       # Comprehensive unit & integration test suite
+│   └── test_hybrid_search.py  # BM25, RRF, and audit logging test suite
+├── scripts/
+│   └── daily_feature_runner.py# Automated daily release & attribution verification runner
 ├── .github/
 │   └── workflows/
 │       └── ci.yml             # GitHub Actions CI matrix for Python 3.10-3.13
 ├── .env.example               # Configuration template
+├── ROADMAP.md                 # 30-day enterprise engineering roadmap
 ├── main.py                    # End-to-end orchestration CLI with Rich UI
 ├── pyproject.toml             # Packaging & project metadata configuration
 ├── requirements.txt           # Production dependencies
@@ -66,9 +77,11 @@ multimodal-enterprise-rag/
    - Automatically detects structured tables and serializes them into clean Markdown format.
    - Preserves exact 1-indexed `page_number`, `source_file`, and character offsets for every chunk.
 
-2. **Hybrid & In-Memory Vector Search (`src/vector_store.py`)**:
-   - Vectorization with OpenAI `text-embedding-3-small` (1536 dimensions).
-   - Embedded in-memory Qdrant engine (`:memory:`) for fast zero-infrastructure testing or remote Qdrant cluster connections for production.
+2. **Production Hybrid Search with Reciprocal Rank Fusion (`src/hybrid_search.py`)**:
+   - Combines semantic dense vectors (`text-embedding-3-small` in Qdrant) with an exact-match Okapi BM25 sparse lexical engine.
+   - Solves the classic financial RAG limitation where exact metrics, dates, and ticker codes are smoothed out by dense embeddings.
+   - Unifies ranked results via Reciprocal Rank Fusion ($RRF(d) = \sum \frac{1}{k + r(d)}$ with $k=60$).
+   - Switch between `--retrieval-mode hybrid`, `--retrieval-mode dense`, or `--retrieval-mode bm25`.
 
 3. **Strict Citation Synthesis (`src/generator.py`)**:
    - GPT-4o prompt engineering strictly enforcing grounding in provided context.
@@ -80,6 +93,13 @@ multimodal-enterprise-rag/
    - **Faithfulness (1-5)**: Measures absence of hallucinations and strict grounding in context.
    - **Relevancy (1-5)**: Measures direct alignment with the user's inquiry.
    - **Automated Flagging**: Flags any response scoring `< 4` on either metric.
+
+5. **Enterprise Audit Trail & Compliance Logging (`src/audit_logger.py`)**:
+   - Records comprehensive retrieval traces, dense/BM25/RRF scores, generator citations, and Critic judge verdicts.
+   - Automatically appends execution traces to `logs/audit_trail.jsonl` and tabular summaries to `logs/audit_summary.csv`.
+
+6. **30-Day Enterprise Engineering Roadmap (`ROADMAP.md`)**:
+   - Structured schedule of mathematically sound, non-slop enterprise capabilities (rerankers, multimodal chart parsers, HyDE, multi-document RAG).
 
 ---
 
@@ -116,20 +136,34 @@ QDRANT_URL=:memory:
 ```
 
 ### 4. Run the Pipeline
-Execute the end-to-end pipeline on the sample quarterly report:
+
+Run standard Hybrid Retrieval on the sample financial report:
 ```bash
 python main.py
 ```
 
-To run with custom queries or documents:
+Run with custom queries or specific retrieval modes:
 ```bash
-python main.py --query "What was the revenue of AI Infrastructure & Hardware in Q3 2025?" --pdf data/sample_report.pdf
+# Hybrid Search (Dense Vector + BM25 Lexical with RRF)
+python main.py --query "What was the revenue of AI Infrastructure & Hardware in Q3 2025?" --retrieval-mode hybrid
+
+# Exact-Match Sparse Lexical Search only (BM25)
+python main.py --query "Operating expenses breakdown" --retrieval-mode bm25
+
+# Pure Dense Semantic Vector Search only
+python main.py --query "Executive strategic priorities" --retrieval-mode dense
 ```
 
 To run offline demonstration / mock mode (without consuming API credits):
 ```bash
-python main.py --mock
+python main.py --mock --retrieval-mode hybrid
 ```
+
+To run the automated daily release & attribution verification runner:
+```bash
+python scripts/daily_feature_runner.py --verify --test
+```
+
 
 ---
 

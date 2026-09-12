@@ -37,6 +37,9 @@ jobs:
         run: |
           python -m unittest discover tests
 
-      - name: Run CLI pipeline smoke test in mock mode
+      - name: Run CLI pipeline smoke tests in mock mode
         run: |
-          python main.py --mock
+          python main.py --mock --retrieval-mode hybrid
+          python main.py --mock --retrieval-mode dense
+          python main.py --mock --retrieval-mode bm25
+

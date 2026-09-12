@@ -1,0 +1,40 @@
+name: Daily Pipeline & Feature Verification
+
+on:
+  schedule:
+    - cron: "0 0 * * *" # Runs daily at midnight UTC
+  workflow_dispatch:
+
+jobs:
+  daily-health-check:
+    name: Daily Release & Verification
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Verify identity & safeguards
+        run: |
+          python scripts/daily_feature_runner.py --verify
+
+      - name: Run test suite
+        run: |
+          python -m unittest discover tests
+
+      - name: Run multi-mode retrieval benchmarks
+        run: |
+          python main.py --mock --retrieval-mode hybrid
+          python main.py --mock --retrieval-mode dense
+          python main.py --mock --retrieval-mode bm25
