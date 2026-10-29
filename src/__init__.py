@@ -8,6 +8,7 @@ from src.hybrid_search import BM25Okapi, ReciprocalRankFusion, HybridRetriever
 from src.audit_logger import EnterpriseAuditLogger, AuditRecord
 from src.generator import RAGGenerator, GenerationResponse
 from src.evaluator import CriticEvaluator, EvaluationResult
+from src.reranker import NeuralCrossReranker, DeterministicCrossScorer, MaximalMarginalRelevanceFilter
 
 __all__ = [
     "DocumentChunk",
@@ -22,5 +23,7 @@ __all__ = [
     "GenerationResponse",
     "CriticEvaluator",
     "EvaluationResult",
+    "NeuralCrossReranker",
+    "DeterministicCrossScorer",
+    "MaximalMarginalRelevanceFilter",
 ]
-

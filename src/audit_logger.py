@@ -1,7 +1,8 @@
 """
 Module: audit_logger.py
 Description: Enterprise audit trail and compliance logger for recording query executions,
-             retrieval traces (dense, sparse, RRF), synthesis citations, and Critic judge deliberations.
+             retrieval traces (dense, sparse, RRF, neural rerank), synthesis citations,
+             and Critic judge deliberations.
 """
 
 from __future__ import annotations
@@ -33,6 +34,8 @@ class AuditRecord(BaseModel):
     timestamp: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     query: str
     retrieval_mode: str
+    reranker_enabled: bool = False
+    diversity_lambda: Optional[float] = None
     retrieved_chunk_count: int
     retrieved_chunks: List[Dict[str, Any]]
     answer: str
@@ -65,7 +68,9 @@ class EnterpriseAuditLogger:
         answer: str,
         citations: List[Dict[str, Any]],
         eval_result: EvaluationResult,
-        persist: bool = True
+        persist: bool = True,
+        reranker_enabled: bool = False,
+        diversity_lambda: Optional[float] = None
     ) -> AuditRecord:
         """
         Records an execution trace and appends it to persistent storage.
@@ -81,12 +86,17 @@ class EnterpriseAuditLogger:
                 "rrf_score": chunk.metadata.get("rrf_score"),
                 "dense_score": chunk.metadata.get("dense_score"),
                 "bm25_score": chunk.metadata.get("bm25_score"),
+                "rerank_score": chunk.metadata.get("rerank_score"),
+                "mmr_score": chunk.metadata.get("mmr_score"),
+                "redundancy_penalty": chunk.metadata.get("redundancy_penalty"),
                 "content_preview": chunk.content[:120].strip() + ("..." if len(chunk.content) > 120 else "")
             })
 
         record = AuditRecord(
             query=query,
             retrieval_mode=retrieval_mode,
+            reranker_enabled=reranker_enabled,
+            diversity_lambda=diversity_lambda,
             retrieved_chunk_count=len(retrieved_chunks),
             retrieved_chunks=chunk_summaries,
             answer=answer,
@@ -122,6 +132,7 @@ class EnterpriseAuditLogger:
             "timestamp",
             "query",
             "retrieval_mode",
+            "reranker_enabled",
             "chunk_count",
             "faithfulness_score",
             "relevancy_score",
@@ -139,6 +150,7 @@ class EnterpriseAuditLogger:
                     "timestamp": record.timestamp,
                     "query": record.query,
                     "retrieval_mode": record.retrieval_mode,
+                    "reranker_enabled": record.reranker_enabled,
                     "chunk_count": record.retrieved_chunk_count,
                     "faithfulness_score": record.faithfulness_score,
                     "relevancy_score": record.relevancy_score,
@@ -147,3 +159,22 @@ class EnterpriseAuditLogger:
                 })
         except Exception as e:
             logger.error(f"Failed to append to CSV audit summary: {e}")
+
+    def get_summary_statistics(self) -> Dict[str, Any]:
+        """Calculates aggregated compliance metrics across all in-memory records."""
+        if not self.in_memory_records:
+            return {"total_queries": 0, "pass_rate": 0.0, "avg_faithfulness": 0.0, "avg_relevancy": 0.0}
+
+        total = len(self.in_memory_records)
+        passed_count = sum(1 for r in self.in_memory_records if r.passed)
+        avg_faith = sum(r.faithfulness_score for r in self.in_memory_records) / total
+        avg_rel = sum(r.relevancy_score for r in self.in_memory_records) / total
+
+        return {
+            "total_queries": total,
+            "passed_queries": passed_count,
+            "pass_rate": round(passed_count / total, 4),
+            "avg_faithfulness": round(avg_faith, 2),
+            "avg_relevancy": round(avg_rel, 2),
+            "flagged_count": total - passed_count
+        }

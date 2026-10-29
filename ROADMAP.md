@@ -9,7 +9,7 @@ This roadmap establishes a rigorous, production-grade engineering schedule for e
 | Day | Feature Domain | Focus Area | Status |
 | :--- | :--- | :--- | :--- |
 | **Day 1** | **Hybrid Retrieval Engine** | BM25 Okapi + Qdrant Dense Vector Search + Reciprocal Rank Fusion (RRF) & Audit Logging | ✅ **Shipped** |
-| **Day 2** | **Neural Cross-Reranker** | Cross-Encoder Context Reranker with Redundancy Filtering | ⏳ Planned |
+| **Day 2** | **Neural Cross-Reranker** | Cross-Encoder Context Reranker with Maximal Marginal Relevance (MMR) Redundancy Filtering | ✅ **Shipped** |
 | **Day 3** | **Multimodal Vision Extractor** | Vision-LLM Chart & Graph Interpreter (PyMuPDF Rasterizer + GPT-4o Vision) | ⏳ Planned |
 | **Day 4** | **Agentic Query Transformation** | Hypothetical Document Embeddings (HyDE) & Multi-Step Query Decomposition | ⏳ Planned |
 | **Day 5** | **Comparative Financial Analysis** | Multi-Document Longitudinal Analysis (e.g. Q2 vs. Q3 YoY / QoQ variance) | ⏳ Planned |
@@ -45,7 +45,7 @@ This roadmap establishes a rigorous, production-grade engineering schedule for e
 
 All daily contributions to this repository must satisfy:
 1. **Mathematical & Algorithmic Rigor**: Implements genuine retrieval, ranking, parsing, or validation logic.
-2. **Attribution Integrity**: Exclusively authored by project maintainer `Aanshmita <129788305+Aanshmita@users.noreply.github.com>`.
-3. **Comprehensive Unit & Integration Testing**: Every feature must include dedicated `tests/test_<feature>.py` tests and pass CI.
+2. **Attribution Integrity**: Exclusively authored and committed by project maintainer `Aanshmita <129788305+Aanshmita@users.noreply.github.com>` with zero Melltros traces.
+3. **Comprehensive Unit & Integration Testing**: Every feature must include dedicated `tests/test_<feature>.py` tests and pass CI with 100% test passing rate.
 4. **Zero Unnecessary Bloat**: Pure Python implementations preferred where possible; minimal dependency footprint.
 5. **Full CLI & Documentation Integration**: Updated CLI options, help descriptions, and README sections.

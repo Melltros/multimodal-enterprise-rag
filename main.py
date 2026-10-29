@@ -1,7 +1,8 @@
 """
 Module: main.py
 Description: End-to-end execution script orchestrating PDF ingestion, vector indexing,
-             grounded synthesis with citations, and Critic LLM evaluation.
+             hybrid search, neural cross-reranking with MMR, grounded synthesis with
+             citations, and Critic LLM evaluation.
 """
 
 from __future__ import annotations
@@ -37,6 +38,7 @@ from src.evaluator import CriticEvaluator
 from src.generator import RAGGenerator
 from src.hybrid_search import HybridRetriever
 from src.parser import PDFParser
+from src.reranker import NeuralCrossReranker
 from src.vector_store import VectorStoreManager
 
 
@@ -49,7 +51,10 @@ logger = logging.getLogger("enterprise_rag")
 def print_banner() -> None:
     """Displays a stylized terminal banner."""
     banner_text = Text("⚡ MULTIMODAL ENTERPRISE RAG PIPELINE ⚡", style="bold cyan")
-    sub_text = Text("Grounded Financial PDF Intelligence • Source Citations • LLM-as-a-Judge Critic", style="dim white")
+    sub_text = Text(
+        "Grounded Financial Intelligence • Hybrid Retrieval • Neural Cross-Reranker • LLM Critic",
+        style="dim white"
+    )
     console.print(Panel(Text.assemble(banner_text, "\n", sub_text), border_style="blue", expand=False))
 
 
@@ -62,25 +67,49 @@ def display_results(
 ) -> None:
     """
     Renders formatted tables and panels detailing the query, retrieved contexts,
-    grounded answer, citations, and Critic evaluation metrics.
+    neural reranking scores, grounded answer, citations, and Critic evaluation metrics.
     """
     console.print("\n")
 
+    # Check if cross-reranking was applied
+    has_rerank = any("rerank_score" in chunk.metadata for chunk in retrieved_chunks)
+
     # 1. Retrieved Context Table
-    context_table = Table(title="🔍 Retrieved Document Contexts", border_style="cyan", show_lines=True)
+    context_table = Table(
+        title="🔍 Retrieved & Ranked Document Contexts" if not has_rerank else "🔍 Neural Cross-Reranked Contexts (with MMR Diversity)",
+        border_style="cyan",
+        show_lines=True
+    )
     context_table.add_column("#", style="bold yellow", width=4)
-    context_table.add_column("Source", style="green", width=20)
+    context_table.add_column("Source", style="green", width=18)
     context_table.add_column("Page", style="bold magenta", width=6)
     context_table.add_column("Method", style="bold blue", width=10)
-    context_table.add_column("Score", style="cyan", width=8)
+
+    if has_rerank:
+        context_table.add_column("Rerank", style="bold green", width=8)
+        context_table.add_column("MMR", style="cyan", width=8)
+        context_table.add_column("Penalty", style="dim yellow", width=8)
+    else:
+        context_table.add_column("Score", style="cyan", width=8)
+
     context_table.add_column("Context Preview", style="white")
 
     for idx, chunk in enumerate(retrieved_chunks, 1):
-        score_val = chunk.metadata.get("score")
-        score_str = f"{score_val:.4f}" if score_val is not None else "N/A"
         method_str = str(chunk.metadata.get("retrieval_method", "dense")).upper()
-        preview = chunk.content.replace("\n", " ")[:130] + ("..." if len(chunk.content) > 130 else "")
-        context_table.add_row(str(idx), chunk.source_file, str(chunk.page_number), method_str, score_str, preview)
+        preview = chunk.content.replace("\n", " ")[:120] + ("..." if len(chunk.content) > 120 else "")
+
+        if has_rerank:
+            r_score = chunk.metadata.get("rerank_score")
+            m_score = chunk.metadata.get("mmr_score")
+            p_score = chunk.metadata.get("redundancy_penalty")
+            r_str = f"{r_score:.4f}" if r_score is not None else "N/A"
+            m_str = f"{m_score:.4f}" if m_score is not None else "N/A"
+            p_str = f"{p_score:.4f}" if p_score is not None else "0.0000"
+            context_table.add_row(str(idx), chunk.source_file, str(chunk.page_number), method_str, r_str, m_str, p_str, preview)
+        else:
+            score_val = chunk.metadata.get("score")
+            score_str = f"{score_val:.4f}" if score_val is not None else "N/A"
+            context_table.add_row(str(idx), chunk.source_file, str(chunk.page_number), method_str, score_str, preview)
 
     console.print(context_table)
     console.print("\n")
@@ -123,10 +152,14 @@ def run_pipeline(
     mock_mode: bool = False,
     retrieval_mode: str = "hybrid",
     rrf_k: int = 60,
-    export_audit: bool = True
+    export_audit: bool = True,
+    rerank: bool = False,
+    rerank_candidates: int = 10,
+    diversity_lambda: float = 0.70
 ) -> None:
     """
-    Executes the end-to-end RAG pipeline from ingestion to Critic evaluation.
+    Executes the end-to-end RAG pipeline from ingestion to Critic evaluation,
+    optionally incorporating Neural Cross-Encoder Reranking and MMR Redundancy Filtering.
     """
     print_banner()
 
@@ -166,24 +199,38 @@ def run_pipeline(
 
     console.print(f"[green]✔ Successfully indexed {len(chunks)} chunks for {retrieval_mode.upper()} retrieval.[/green]")
 
-    # Step 4: Hybrid / Dense / BM25 Search & Retrieval
-    console.print(f"\n[bold blue][3/4] Retrieving Top {top_k} Contexts ({retrieval_mode.upper()} mode) for Query:[/bold blue] [cyan]'{query}'[/cyan]")
+    # Step 4: Retrieval & Optional Neural Cross-Reranking
+    fetch_k = max(top_k, rerank_candidates) if rerank else top_k
+    console.print(
+        f"\n[bold blue][3/4] Retrieving Candidates ({retrieval_mode.upper()} mode, count={fetch_k}) "
+        f"for Query:[/bold blue] [cyan]'{query}'[/cyan]"
+    )
     try:
-        retrieved_chunks = retriever.search(query=query, top_k=top_k, mode=retrieval_mode)
+        candidate_chunks = retriever.search(query=query, top_k=fetch_k, mode=retrieval_mode)
     except Exception as e:
         console.print(f"[bold red]❌ Retrieval failed:[/bold red] {e}")
         sys.exit(1)
 
+    if rerank:
+        console.print(
+            f"[bold blue]⚡ Applying Neural Cross-Encoder Reranking & MMR Redundancy Filter "
+            f"(lambda={diversity_lambda:.2f}, target top_k={top_k})...[/bold blue]"
+        )
+        reranker = NeuralCrossReranker(diversity_lambda=diversity_lambda, mock_mode=mock_mode)
+        final_chunks = reranker.rerank(query=query, documents=candidate_chunks, top_k=top_k)
+    else:
+        final_chunks = candidate_chunks[:top_k]
+
     # Step 5: Answer Synthesis with Citations
     console.print(f"\n[bold blue][4/4] Synthesizing Answer & Running Critic Evaluation...[/bold blue]")
     generator = RAGGenerator(mock_mode=mock_mode)
-    gen_response = generator.generate_answer(query=query, context_chunks=retrieved_chunks)
+    gen_response = generator.generate_answer(query=query, context_chunks=final_chunks)
 
     # Step 6: Critic LLM-as-a-Judge Evaluation
     critic = CriticEvaluator(mock_mode=mock_mode)
     eval_result = critic.evaluate(
         query=query,
-        context_chunks=retrieved_chunks,
+        context_chunks=final_chunks,
         generated_answer=gen_response.answer
     )
 
@@ -193,7 +240,7 @@ def run_pipeline(
         answer=gen_response.answer,
         citations=gen_response.citations,
         eval_result=eval_result,
-        retrieved_chunks=retrieved_chunks
+        retrieved_chunks=final_chunks
     )
 
     # Step 8: Enterprise Audit Trail
@@ -203,11 +250,13 @@ def run_pipeline(
             audit_logger.log_execution(
                 query=query,
                 retrieval_mode=retrieval_mode,
-                retrieved_chunks=retrieved_chunks,
+                retrieved_chunks=final_chunks,
                 answer=gen_response.answer,
                 citations=gen_response.citations,
                 eval_result=eval_result,
-                persist=True
+                persist=True,
+                reranker_enabled=rerank,
+                diversity_lambda=diversity_lambda if rerank else None
             )
             console.print("\n[dim green]✔ Compliance audit record logged to logs/audit_trail.jsonl and logs/audit_summary.csv[/dim green]")
         except Exception as e:
@@ -220,7 +269,7 @@ def main() -> None:
     load_dotenv()
 
     parser = argparse.ArgumentParser(
-        description="Multimodal Enterprise RAG Pipeline with Hybrid Retrieval & Critic LLM Evaluation"
+        description="Multimodal Enterprise RAG Pipeline with Hybrid Retrieval, Cross-Reranker & Critic LLM"
     )
     parser.add_argument(
         "--pdf",
@@ -254,6 +303,23 @@ def main() -> None:
         help="Reciprocal Rank Fusion smoothing constant (default: 60)"
     )
     parser.add_argument(
+        "--rerank",
+        action="store_true",
+        help="Apply Neural Cross-Encoder Reranking and Maximal Marginal Relevance (MMR) Redundancy Filter"
+    )
+    parser.add_argument(
+        "--rerank-candidates",
+        type=int,
+        default=10,
+        help="Number of initial candidate chunks retrieved before reranking (default: 10)"
+    )
+    parser.add_argument(
+        "--diversity-penalty",
+        type=float,
+        default=0.70,
+        help="Tradeoff parameter lambda for MMR diversity filtering (0.0 = maximal diversity, 1.0 = maximal relevance, default: 0.70)"
+    )
+    parser.add_argument(
         "--no-audit",
         action="store_true",
         help="Disable automatic export of compliance audit trail logs"
@@ -280,7 +346,10 @@ def main() -> None:
         mock_mode=mock_mode,
         retrieval_mode=args.retrieval_mode,
         rrf_k=args.rrf_k,
-        export_audit=not args.no_audit
+        export_audit=not args.no_audit,
+        rerank=args.rerank,
+        rerank_candidates=args.rerank_candidates,
+        diversity_lambda=args.diversity_penalty
     )
 
 

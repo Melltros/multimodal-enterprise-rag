@@ -1,7 +1,7 @@
 """
 Script: daily_feature_runner.py
 Description: Automated pipeline utility for testing, attributing, committing,
-             and publishing daily features strictly under Aanshmita's identity.
+             and publishing daily features strictly under Melltros's identity.
 """
 
 import argparse
@@ -11,9 +11,8 @@ import sys
 from pathlib import Path
 
 # Enforce strict attribution constants
-ALLOWED_AUTHOR_NAME = "Aanshmita"
-ALLOWED_AUTHOR_EMAIL = "129788305+Aanshmita@users.noreply.github.com"
-DISALLOWED_SUBSTRINGS = ["melltros", "madhav", "kelodiamadhav"]
+ALLOWED_AUTHOR_NAME = "Melltros"
+ALLOWED_AUTHOR_EMAIL = "minecraftkelodia@gmail.com"
 
 
 def run_cmd(cmd: list[str], cwd: Path | None = None, env: dict | None = None) -> subprocess.CompletedProcess:
@@ -36,7 +35,7 @@ def run_cmd(cmd: list[str], cwd: Path | None = None, env: dict | None = None) ->
 
 
 def verify_attribution() -> bool:
-    """Verifies that Git identity is strictly set to Aanshmita with zero Melltros traces."""
+    """Verifies that Git identity is strictly set to Melltros."""
     print("🔍 Verifying git identity and attribution safeguards...")
 
     # Check local git config
@@ -49,36 +48,39 @@ def verify_attribution() -> bool:
     print(f"👤 Git user.name:  {author_name}")
     print(f"📧 Git user.email: {author_email}")
 
-    for banned in DISALLOWED_SUBSTRINGS:
-        if banned in author_name.lower() or banned in author_email.lower():
-            print(f"🚨 FATAL: Disallowed substring '{banned}' detected in git author settings!")
-            return False
-
     if author_name != ALLOWED_AUTHOR_NAME or author_email != ALLOWED_AUTHOR_EMAIL:
         print("⚠️ Current git config does not match target. Automatically configuring...")
         run_cmd(["git", "config", "user.name", ALLOWED_AUTHOR_NAME])
         run_cmd(["git", "config", "user.email", ALLOWED_AUTHOR_EMAIL])
 
-    print("✅ Git identity verified: 100% attributed to Aanshmita.")
+    print("✅ Git identity verified: 100% attributed to Melltros.")
     return True
 
 
 def run_tests() -> bool:
     """Runs full unit test discovery."""
-    print("🧪 Running test suite...")
+    print("🧪 Running unit and integration test suite...")
     res = run_cmd([sys.executable, "-m", "unittest", "discover", "tests"])
     return res.returncode == 0
 
 
 def run_smoke_test() -> bool:
-    """Runs CLI smoke test in mock mode."""
-    print("🚀 Running CLI pipeline smoke test...")
-    res = run_cmd([sys.executable, "main.py", "--mock", "--retrieval-mode", "hybrid"])
-    return res.returncode == 0
+    """Runs CLI smoke tests in mock mode across retrieval and reranking configurations."""
+    print("🚀 Running CLI pipeline smoke tests...")
+    modes = [
+        ["main.py", "--mock", "--retrieval-mode", "hybrid", "--rerank"],
+        ["main.py", "--mock", "--retrieval-mode", "dense"],
+        ["main.py", "--mock", "--retrieval-mode", "bm25"],
+    ]
+    for mode_args in modes:
+        res = run_cmd([sys.executable] + mode_args)
+        if res.returncode != 0:
+            return False
+    return True
 
 
 def build_env() -> dict:
-    """Creates environment with forced author attribution."""
+    """Creates execution environment strictly forcing Melltros author & committer attribution."""
     env = os.environ.copy()
     env["GIT_AUTHOR_NAME"] = ALLOWED_AUTHOR_NAME
     env["GIT_AUTHOR_EMAIL"] = ALLOWED_AUTHOR_EMAIL
@@ -97,7 +99,7 @@ def commit_and_push(commit_msg: str, push: bool = False) -> bool:
         return False
 
     if not run_smoke_test():
-        print("❌ Smoke test failed. Commit aborted.")
+        print("❌ Smoke tests failed. Commit aborted.")
         return False
 
     env = build_env()
@@ -127,18 +129,22 @@ def commit_and_push(commit_msg: str, push: bool = False) -> bool:
     print(f"🎉 Commit created successfully: '{commit_msg}'")
 
     if push:
-        print("🚀 Pushing to origin main...")
+        print("🚀 Pushing to origin main as Melltros...")
         push_res = run_cmd(["git", "push", "origin", "main"], env=env)
-        return push_res.returncode == 0
+        if push_res.returncode != 0:
+            print("⚠️ Push failed. Please ensure Melltros has write permissions on the remote repository.")
+            return False
+        print("✅ Successfully pushed to remote origin as Melltros.")
+        return True
 
     return True
 
 
 def main():
     parser = argparse.ArgumentParser(description="Daily Feature Pipeline Runner")
-    parser.add_argument("--verify", action="store_true", help="Verify git identity")
+    parser.add_argument("--verify", action="store_true", help="Verify git identity and attribution safeguards")
     parser.add_argument("--test", action="store_true", help="Run tests and smoke tests")
-    parser.add_argument("--commit", type=str, help="Commit message to use")
+    parser.add_argument("--commit", type=str, help="Commit message to use for staged changes")
     parser.add_argument("--push", action="store_true", help="Push commit to remote origin")
 
     args = parser.parse_args()

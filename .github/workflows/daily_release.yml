@@ -33,8 +33,9 @@ jobs:
         run: |
           python -m unittest discover tests
 
-      - name: Run multi-mode retrieval benchmarks
+      - name: Run multi-mode retrieval & neural reranking benchmarks
         run: |
+          python main.py --mock --retrieval-mode hybrid --rerank
           python main.py --mock --retrieval-mode hybrid
           python main.py --mock --retrieval-mode dense
           python main.py --mock --retrieval-mode bm25
